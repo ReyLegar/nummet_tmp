@@ -12,6 +12,8 @@ void MethodGas::convertToParam(int i, Param& p)
     p.p = p.r * p.e * (GAM - 1.0); // по формуле вычисляется давление
     p.T = 0.0; // не используется 
     p.M = p.magU() / sqrt(GAM * p.p / p.r); // число Маха = скорость / скорость звука 
+    p.mu = 0.1;
+    p.k = 0.1;
 }
 
 
@@ -94,78 +96,62 @@ void MethodGas::run()
                 fv = 0.5 * ((fvl + fvr) - alpha * (rvr - rvl));
                 fe = 0.5 * ((fel + fer) - alpha * (rer - rel));
                 Только здесь изменится только первая часть, до alpha
+                Полусуммы градиентов скоростей
         */
 
   
+        double* sum_grad_u_x = new double[mesh->cCount];
+        double* sum_grad_u_y = new double[mesh->cCount];
+        double* sum_grad_v_x = new double[mesh->cCount];
+        double* sum_grad_v_y = new double[mesh->cCount];
+
+        memset(sum_grad_u_x, 0, sizeof(double) * mesh->cCount);
+        memset(sum_grad_u_y, 0, sizeof(double) * mesh->cCount);
+        memset(sum_grad_v_x, 0, sizeof(double) * mesh->cCount);
+        memset(sum_grad_v_y, 0, sizeof(double) * mesh->cCount);
+
         for (int ie = 0; ie < mesh->eCount; ie++) {
-            Edge& e = mesh->edges[ie]; // ссылка на ребро, чтобы не таскать конструкцию mesh->edges[ie]
-            int c1 = e.c1; // номер ячейки, из которой выходит нормаль
-            Cell& cell1 = mesh->getCell(c1); // получаем ссылку на ячейку  
+            Edge& e = mesh->edges[ie];
+            int c1 = e.c1;
+            Cell& cell1 = mesh->getCell(c1);
 
             Param p1, p2;
-            convertToParam(c1, p1); // для ячейки получаем примитивные переменные
-            if (e.c2 >= 0) { // если выполняется
-                convertToParam(e.c2, p2); // то существует соседняя ячейка
+            convertToParam(c1, p1);
+            if (e.c2 >= 0) {
+                convertToParam(e.c2, p2);
             }
             else {
-                bnd(&e, p1, p2); // если нет, то граничное условие
+                bnd(&e, p1, p2);
             }
 
-            
-            grad_u_x[ie] += (p1.u + p2.u) / 2 * e.l * e.n.x;
-            grad_u_y[ie] += (p1.u + p2.u) / 2 * e.l * e.n.y;
-            grad_v_x[ie] += (p1.v + p2.v) / 2 * e.l * e.n.x;
-            grad_v_y[ie] += (p1.v + p2.v) / 2 * e.l * e.n.y; 
-
+            sum_grad_u_x[c1] += (p1.u + p2.u) / 2 * e.l * e.n.x;
+            sum_grad_u_y[c1] += (p1.u + p2.u) / 2 * e.l * e.n.y;
+            sum_grad_v_x[c1] += (p1.v + p2.v) / 2 * e.l * e.n.x;
+            sum_grad_v_y[c1] += (p1.v + p2.v) / 2 * e.l * e.n.y;
 
             if (e.c2 >= 0) {
-                Cell& cell2 = mesh->getCell(e.c2);
-                grad_u_x[e.c2] -= (p1.u + p2.u) / 2 * e.l * e.n.x;
-                grad_u_y[e.c2] -= (p1.u + p2.u) / 2 * e.l * e.n.y;
-                grad_v_x[e.c2] -= (p1.u + p2.u) / 2 * e.l * e.n.x;
-                grad_v_y[e.c2] -= (p1.u + p2.u) / 2 * e.l * e.n.y;
-
+                int c2 = e.c2;
+                sum_grad_u_x[c2] -= (p1.u + p2.u) / 2 * e.l * e.n.x;
+                sum_grad_u_y[c2] -= (p1.u + p2.u) / 2 * e.l * e.n.y;
+                sum_grad_v_x[c2] -= (p1.v + p2.v) / 2 * e.l * e.n.x;
+                sum_grad_v_y[c2] -= (p1.v + p2.v) / 2 * e.l * e.n.y;
             }
-
-            grad_u_x[ie] /= cell1.S;
-            grad_u_y[ie] /= cell1.S;
-            grad_v_x[ie] /= cell1.S;
-            grad_v_y[ie] /= cell1.S;
         }
 
-        // ----- Проход по ребрам -------------------
-        /*for (int ie = 0; ie < mesh->eCount; ie++) {
-            Edge& e = mesh->edges[ie]; // ссылка на ребро, чтобы не таскать конструкцию mesh->edges[ie]
-            int c1 = e.c1; // номер ячейки, из которой выходит нормаль
-            Cell& cell1 = mesh->getCell(c1); // получаем ссылку на ячейку  
+        for (int i = 0; i < mesh->cCount; i++) {
+            Cell& cell = mesh->cells[i];
+            grad_u_x[i] = sum_grad_u_x[i] / cell.S;
+            grad_u_y[i] = sum_grad_u_y[i] / cell.S;
+            grad_v_x[i] = sum_grad_v_x[i] / cell.S;
+            grad_v_y[i] = sum_grad_v_y[i] / cell.S;
+        }
 
-            Param p1, p2;
-            convertToParam(c1, p1); // для ячейки получаем примитивные переменные
-            if (e.c2 >= 0) { // если выполняется
-                convertToParam(e.c2, p2); // то существует соседняя ячейка
-            }
-            else {
-                bnd(&e, p1, p2); // если нет, то граничное условие
-            }
-            
+        delete[] sum_grad_u_x;
+        delete[] sum_grad_u_y;
+        delete[] sum_grad_v_x;
+        delete[] sum_grad_v_y;
 
-            double fr, fu, fv, fe;
-            flux(p1, p2, e.n, fr, fu, fv, fe);
-            fr *= e.l;
-            fu *= e.l;
-            fv *= e.l;
-            fe *= e.l;
-            int_ro[c1] -= fr;
-            int_ru[c1] -= fu;
-            int_rv[c1] -= fv;
-            int_re[c1] -= fe;
-            if (e.c2 >= 0) {
-                int_ro[e.c2] += fr;
-                int_ru[e.c2] += fu;
-                int_rv[e.c2] += fv;
-                int_re[e.c2] += fe;
-            }
-        }*/
+      
 
         for (int ie = 0; ie < mesh->eCount; ie++) {
             Edge& e = mesh->edges[ie];
@@ -183,6 +169,18 @@ void MethodGas::run()
 
             double fr, fu, fv, fe;
             flux(p1, p2, e.n, fr, fu, fv, fe);
+
+            double tau_xx = 2 * p1.mu * grad_u_x[ie] - 2.0 / 3.0 * p1.mu * (grad_u_x[ie] + grad_v_y[ie]);
+            double tau_yy = 2 * p1.mu * grad_v_y[ie] - 2.0 / 3.0 * p1.mu * (grad_u_x[ie] + grad_v_y[ie]);
+            double tau_xy = p1.mu * (grad_u_y[ie] + grad_v_x[ie]);
+
+            double Q_x = -p1.k * grad_u_x[ie];
+            double Q_y = -p1.k * grad_v_y[ie];
+
+            fu += tau_xx * e.n.x + tau_xy * e.n.y;
+            fv += tau_xy * e.n.x + tau_yy * e.n.y;
+            fe += (tau_xx * p1.u + tau_yy * p1.v) * e.n.x + (tau_xy * p1.u + tau_yy * p1.v) * e.n.y - Q_x * e.n.x - Q_y * e.n.y;
+
             fr *= e.l;
             fu *= e.l;
             fv *= e.l;
@@ -197,15 +195,20 @@ void MethodGas::run()
                 int_rv[e.c2] += fv;
                 int_re[e.c2] += fe;
             }
+
+            //printf("%lf | %lf | %lf | %lf\n", int_ro[c1], int_ru[c1], int_rv[c1], int_re[c1]);
+
+            
         }
 
         for (int i = 0; i < mesh->cCount; i++) {
             double CFL = TAU / mesh->cells[i].S;
+
             ro[i] += int_ro[i] * CFL;
             ru[i] += int_ru[i] * CFL;
             rv[i] += int_rv[i] * CFL;
             re[i] += int_re[i] * CFL;
-            printf("%lf | %lf | %lf | %lf\n", ro[i], ru[i], rv[i], re[i]);
+            //printf("%lf | %lf | %lf | %lf\n", ro[i], ru[i], rv[i], re[i]);
 
         }
 
