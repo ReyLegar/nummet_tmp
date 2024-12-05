@@ -3,6 +3,8 @@
 #include <cstring>
 #include <cmath>
 
+const double mu = 0.1;
+
 void MethodGas::convertToParam(int i, Param& p)
 {
     p.r = ro[i]; // ro в U
@@ -47,7 +49,7 @@ void MethodGas::init()
     grad_v_y = new double[mesh->eCount];
 
 
- 
+
     TMAX = 4.0;
     TAU = 1.e-4;
 }
@@ -78,19 +80,19 @@ void MethodGas::run()
         memset(int_re, 0, sizeof(double) * mesh->cCount);
         // ----------------------
 
-        memset(grad_u_x, 0, sizeof(double) * mesh->eCount);
-        memset(grad_u_y, 0, sizeof(double) * mesh->eCount);
-        memset(grad_v_x, 0, sizeof(double) * mesh->eCount);
-        memset(grad_v_y, 0, sizeof(double) * mesh->eCount);
+        memset(grad_u_x, 0, sizeof(double) * mesh->cCount);
+        memset(grad_u_y, 0, sizeof(double) * mesh->cCount);
+        memset(grad_v_x, 0, sizeof(double) * mesh->cCount);
+        memset(grad_v_y, 0, sizeof(double) * mesh->cCount);
 
 
         /*
             Надо пройтись по ребрам и найти градиенты
             1. Заводим отдельные массивы grad_u, grad_v, или grad_u_x, grad_u_y, grad_v_x, grad_v_y       (+)
-            2. В таком же цикле по ребрам считаем по формуле Грина-Гаусса                                 (+-)      
+            2. В таком же цикле по ребрам считаем по формуле Грина-Гаусса                                 (+-)
             3. Перед тем как начнется цикл основной у нас уже есть массив градиентов                      (+-)
             4. Надо завести переменные соответствующие вязким потокам аналогично flux(p1, p2, e.n, fr, fu, fv, fe) (здесь fr, fu, fv, fe)
-            5. Подсчитать переменные аналогично 
+            5. Подсчитать переменные аналогично
                 fr = 0.5 * ((frl + frr) - alpha * (ror - rol));
                 fu = 0.5 * ((ful + fur) - alpha * (rur - rul));
                 fv = 0.5 * ((fvl + fvr) - alpha * (rvr - rvl));
@@ -99,7 +101,7 @@ void MethodGas::run()
                 Полусуммы градиентов скоростей
         */
 
-  
+
         double* sum_grad_u_x = new double[mesh->cCount];
         double* sum_grad_u_y = new double[mesh->cCount];
         double* sum_grad_v_x = new double[mesh->cCount];
@@ -151,11 +153,12 @@ void MethodGas::run()
         delete[] sum_grad_v_x;
         delete[] sum_grad_v_y;
 
-      
+
 
         for (int ie = 0; ie < mesh->eCount; ie++) {
             Edge& e = mesh->edges[ie];
             int c1 = e.c1;
+            int c2 = e.c2;
             Cell& cell1 = mesh->getCell(c1);
 
             Param p1, p2;
@@ -169,17 +172,6 @@ void MethodGas::run()
 
             double fr, fu, fv, fe;
             flux(p1, p2, e.n, fr, fu, fv, fe);
-
-            double tau_xx = 2 * p1.mu * grad_u_x[ie] - 2.0 / 3.0 * p1.mu * (grad_u_x[ie] + grad_v_y[ie]);
-            double tau_yy = 2 * p1.mu * grad_v_y[ie] - 2.0 / 3.0 * p1.mu * (grad_u_x[ie] + grad_v_y[ie]);
-            double tau_xy = p1.mu * (grad_u_y[ie] + grad_v_x[ie]);
-
-            double Q_x = -p1.k * grad_u_x[ie];
-            double Q_y = -p1.k * grad_v_y[ie];
-
-            fu += tau_xx * e.n.x + tau_xy * e.n.y;
-            fv += tau_xy * e.n.x + tau_yy * e.n.y;
-            fe += (tau_xx * p1.u + tau_yy * p1.v) * e.n.x + (tau_xy * p1.u + tau_yy * p1.v) * e.n.y - Q_x * e.n.x - Q_y * e.n.y;
 
             fr *= e.l;
             fu *= e.l;
@@ -198,7 +190,51 @@ void MethodGas::run()
 
             //printf("%lf | %lf | %lf | %lf\n", int_ro[c1], int_ru[c1], int_rv[c1], int_re[c1]);
 
-            
+
+
+            double tau_xx_l = 2.0 * mu * grad_u_x[c1] - (2.0 / 3.0) * mu * (grad_u_x[c1] + grad_v_y[c1]);
+            double tau_yy_l = 2.0 * mu * grad_v_y[c1] - (2.0 / 3.0) * mu * (grad_u_x[c1] + grad_v_y[c1]);
+            double tau_xy_l = mu * (grad_u_y[c1] + grad_v_x[c1]);
+
+            double tau_xx_r = 0, tau_yy_r = 0, tau_xy_r = 0;
+
+            if (e.c2 >= 0) {
+                tau_xx_r = 2.0 * mu * grad_u_x[c2] - (2.0 / 3.0) * mu * (grad_u_x[c2] + grad_v_y[c2]);
+                tau_yy_r = 2.0 * mu * grad_v_y[c2] - (2.0 / 3.0) * mu * (grad_u_x[c2] + grad_v_y[c2]);
+                tau_xy_r = mu * (grad_u_y[c2] + grad_v_x[c2]);
+            }
+
+            double fv_fu_l = tau_xx_l * e.n.x + tau_xy_l * e.n.y;
+            double fv_fv_l = tau_xy_l * e.n.x + tau_yy_l * e.n.y;
+            double fv_fe_l = (tau_xx_l * p1.u + tau_xy_l * p1.v) * e.n.x + (tau_xy_l * p1.u + tau_yy_l * p1.v) * e.n.y;
+
+            double fv_fu_r = 0;
+            double fv_fv_r = 0;
+            double fv_fe_r = 0;
+
+            if (e.c2 >= 0) {
+                fv_fu_r = tau_xx_r * e.n.x + tau_xy_r * e.n.y;
+                fv_fv_r = tau_xy_r * e.n.x + tau_yy_r * e.n.y;
+                fv_fe_r = (tau_xx_r * p2.u + tau_xy_r * p2.v) * e.n.x + (tau_xy_r * p2.u + tau_yy_r * p2.v) * e.n.y;
+            }
+
+            double fu2 = 0.5 * (fv_fu_l + fv_fu_r);
+            double fv2 = 0.5 * (fv_fv_l + fv_fv_r);
+            double fe2 = 0.5 * (fv_fe_l + fv_fe_r);
+
+            fu2 *= e.l;
+            fv2 *= e.l;
+            fe2 *= e.l;
+            int_ru[c1] += fu2;
+            int_rv[c1] += fv2;
+            int_re[c1] += fe2;
+            if (e.c2 >= 0) {
+                int_ru[e.c2] -= fu2;
+                int_rv[e.c2] -= fv2;
+                int_re[e.c2] -= fe2;
+            }
+
+
         }
 
         for (int i = 0; i < mesh->cCount; i++) {
